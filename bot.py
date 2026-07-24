@@ -36,7 +36,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
     pdf = FPDF()
     pdf.add_page()
     # Шрифт с кириллицей (на Koyeb есть DejaVu)
-    pdf.add_font("DejaVu", "", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", uni=True)
+    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
     pdf.set_font("DejaVu", size=12)
 
     if text:
