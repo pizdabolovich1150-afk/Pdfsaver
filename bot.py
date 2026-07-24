@@ -32,22 +32,18 @@ async def ensure_authorized():
         raise Exception("Сессия недействительна. Пересоздайте SESSION_STRING.")
 
 def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
-    """Генерирует PDF с текстом и картинкой."""
+    """Генерирует PDF: сначала картинка, потом текст (как в Telegram)."""
     pdf = FPDF()
     pdf.add_page()
-    # Шрифт с кириллицей (на Koyeb есть DejaVu)
+    # Шрифт с кириллицей
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
     pdf.set_font("DejaVu", size=12)
 
-    if text:
-        for line in text.split("\n"):
-            pdf.multi_cell(0, 10, line)
-            pdf.ln(2)
-
+    # Сначала картинка
     if image_bytes:
         img = Image.open(BytesIO(image_bytes))
         w, h = img.size
-        max_w = 180  # мм
+        max_w = 180  # мм, ширина страницы A4 с полями
         if w > max_w:
             ratio = max_w / w
             w, h = int(w * ratio), int(h * ratio)
@@ -55,6 +51,13 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
         img.save(tmp_path, "JPEG")
         pdf.image(tmp_path, x=10, w=w, h=h)
         os.remove(tmp_path)
+        pdf.ln(5)  # небольшой отступ после картинки
+
+    # Затем текст
+    if text:
+        for line in text.split("\n"):
+            pdf.multi_cell(0, 10, line)
+            pdf.ln(2)
 
     return pdf.output()
 
