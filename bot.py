@@ -10,31 +10,32 @@ from PIL import Image
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ---------- Переменные окружения (Render их передаст) ----------
+# ---------- Переменные окружения ----------
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 PHONE = os.environ["PHONE"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-SESSION_STRING = os.environ["SESSION_STRING"]  # строка сессии
-# ----------------------------------------------------------------
+SESSION_STRING = os.environ["SESSION_STRING"]
+# ------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Клиент с строковой сессией — не требует файла
+# Клиент Telethon с строковой сессией
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 async def ensure_authorized():
-    """Подключает клиент. Сессия уже в строке, код вводить не нужно."""
+    """Подключает и проверяет авторизацию Telethon."""
     if not client.is_connected():
         await client.connect()
     if not await client.is_user_authorized():
-        # Если вдруг сессия протухла, нужен интерактив, но мы этого избегаем.
         raise Exception("Сессия недействительна. Пересоздайте SESSION_STRING.")
 
 def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
+    """Генерирует PDF с текстом и картинкой."""
     pdf = FPDF()
     pdf.add_page()
+    # Шрифт с кириллицей (на Koyeb есть DejaVu)
     pdf.add_font("DejaVu", "", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", uni=True)
     pdf.set_font("DejaVu", size=12)
 
@@ -46,7 +47,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
     if image_bytes:
         img = Image.open(BytesIO(image_bytes))
         w, h = img.size
-        max_w = 180
+        max_w = 180  # мм
         if w > max_w:
             ratio = max_w / w
             w, h = int(w * ratio), int(h * ratio)
@@ -57,6 +58,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
 
     return pdf.output()
 
+# ---------- Обработчики команд ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Пришли мне ссылку на пост в формате:\n"
@@ -114,13 +116,23 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Произошла ошибка: {e}")
 
 async def main():
-    # Авторизуемся (сессия уже в SESSION_STRING, код не нужен)
     await ensure_authorized()
 
+    # Создаём приложение python-telegram-bot
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-    await app.run_polling()
+
+    # Запускаем без вложенных event loop'ов
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
+    # Бесконечное ожидание (бот работает)
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
