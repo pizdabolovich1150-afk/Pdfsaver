@@ -5,6 +5,7 @@ import logging
 from io import BytesIO
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.types import MessageService
 from fpdf import FPDF
 from PIL import Image
 from telegram import Update
@@ -35,7 +36,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
     """Генерирует PDF: сначала картинка, потом текст (как в Telegram)."""
     pdf = FPDF()
     pdf.add_page()
-    # Шрифт с кириллицей
+    # Шрифт с кириллицей (лежит в корне проекта)
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
     pdf.set_font("DejaVu", size=12)
 
@@ -43,7 +44,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
     if image_bytes:
         img = Image.open(BytesIO(image_bytes))
         w, h = img.size
-        max_w = 180  # мм, ширина страницы A4 с полями
+        max_w = 180  # мм
         if w > max_w:
             ratio = max_w / w
             w, h = int(w * ratio), int(h * ratio)
@@ -51,7 +52,7 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
         img.save(tmp_path, "JPEG")
         pdf.image(tmp_path, x=10, w=w, h=h)
         os.remove(tmp_path)
-        pdf.ln(5)  # небольшой отступ после картинки
+        pdf.ln(5)  # отступ после картинки
 
     # Затем текст
     if text:
@@ -65,36 +66,51 @@ def generate_pdf(text: str, image_bytes: bytes = None) -> bytes:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Пришли мне ссылку на пост в формате:\n"
-        "`t.me/имя_канала/номер`\n\n"
+        "`t.me/имя_канала/номер`\n"
+        "или для тем форумов:\n"
+        "`t.me/имя_канала/тред_id/номер_сообщения`\n\n"
         "Я пришлю PDF с текстом и картинкой.",
         parse_mode="Markdown"
     )
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = update.message.text
-    match = re.search(r"t\.me/([^/]+)/(\d+)", msg_text)
+
+    # Разбираем ссылку: может быть с одним или двумя числами (для форумов)
+    match = re.search(r"t\.me/([^/]+)/(\d+)(?:/(\d+))?", msg_text)
     if not match:
         await update.message.reply_text("❌ Неверный формат ссылки.")
         return
 
-    channel, msg_id = match.group(1), int(match.group(2))
+    channel = match.group(1)
+    # Если есть второе число — это настоящий ID сообщения (в темах), иначе первое
+    msg_id = int(match.group(3) or match.group(2))
+
     await update.message.reply_text("🔍 Получаю пост…")
 
     try:
         await ensure_authorized()
         message = await client.get_messages(channel, ids=msg_id)
+
         if not message:
             await update.message.reply_text("❌ Сообщение не найдено.")
+            return
+
+        # Пропускаем служебные сообщения (закрепы, смена названия и т.п.)
+        if isinstance(message, MessageService):
+            await update.message.reply_text("❌ Это служебное сообщение (например, закреп, создание темы). Контента нет.")
             return
 
         text = message.text or message.caption or ""
         image_bytes = None
 
+        # Скачиваем фото (наибольшее разрешение)
         if message.photo:
             path = await message.download_media(file="/tmp/")
             with open(path, "rb") as f:
                 image_bytes = f.read()
             os.remove(path)
+        # Если картинка отправлена как документ (image/gif и т.д.)
         elif message.document and "image" in (message.document.mime_type or ""):
             path = await message.download_media(file="/tmp/")
             with open(path, "rb") as f:
@@ -126,12 +142,12 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
 
-    # Запускаем без вложенных event loop'ов
+    # Запуск без вложенных event loop'ов
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
 
-    # Бесконечное ожидание (бот работает)
+    # Держим бота активным
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
